@@ -1,0 +1,35 @@
+// prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+// 1. Farmer / User Table
+model User {
+  id        Int      @id @default(autoincrement())
+  name      String
+  phone     String   @unique
+  location  String
+  createdAt DateTime @default(now())
+}
+
+// 2. Mandi Market Rates Table
+model MarketRate {
+  id        Int      @id @default(autoincrement())
+  crop      String
+  month     String
+  price     Float
+  updatedAt DateTime @updatedAt
+}
+
+// 3. AI Assistant Query Logs
+model ChatLog {
+  id        Int      @id @default(autoincrement())
+  userQuery String
+  botReply  String
+  createdAt DateTime @default(now())
+}

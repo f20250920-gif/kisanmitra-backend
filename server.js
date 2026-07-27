@@ -1,59 +1,121 @@
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
+const { PrismaClient } = require('@prisma/client');
+const { PrismaBetterSqlite3 } = require('@prisma/adapter-better-sqlite3');
+const { GoogleGenAI } = require('@google/genai');
 require('dotenv').config();
 
 const app = express();
+
+// Initialize Database & Gemini AI Client
+const dbPath = path.resolve(__dirname, 'prisma/dev.db');
+const adapter = new PrismaBetterSqlite3({ url: `file:${dbPath}` });
+const prisma = new PrismaClient({ adapter });
+
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+
 const PORT = process.env.PORT || 5000;
 
 // Middleware
 app.use(cors());
 app.use(express.json());
 
-// Root Endpoint 
+// Root Endpoint
 app.get('/', (req, res) => {
-  res.send('KisanMitra Backend API is running smoothly!');
+  res.send('KisanMitra Backend API running smoothly!');
 });
 
-// Sample Market Data Endpoint (Mandi Prices)
-app.get('/api/market-rates', (req, res) => {
-  res.json({
-    success: true,
-    data: [
-      { month: 'Jan', Wheat: 2100, Rice: 2800 },
-      { month: 'Feb', Wheat: 2150, Rice: 2850 },
-      { month: 'Mar', Wheat: 2200, Rice: 2900 },
-      { month: 'Apr', Wheat: 2250, Rice: 2950 },
-      { month: 'May', Wheat: 2220, Rice: 3000 },
-      { month: 'Jun', Wheat: 2300, Rice: 3100 },
-    ]
-  });
+// 🌐 Web UI Route for Chat Testing
+app.get('/chat-ui', (req, res) => {
+  res.send(`
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <title>KisanMitra AI Assistant</title>
+      <style>
+        body { font-family: system-ui, sans-serif; max-width: 650px; margin: 40px auto; padding: 20px; background: #f4f7f6; }
+        h2 { color: #2e7d32; }
+        textarea { width: 100%; height: 90px; padding: 12px; border-radius: 8px; border: 1px solid #ccc; font-size: 15px; box-sizing: border-box; }
+        button { background: #2e7d32; color: white; border: none; padding: 12px 24px; border-radius: 6px; font-size: 16px; cursor: pointer; margin-top: 10px; font-weight: bold; }
+        button:hover { background: #236127; }
+        #response { margin-top: 20px; padding: 16px; background: white; border-radius: 8px; border-left: 5px solid #2e7d32; white-space: pre-wrap; font-size: 15px; line-height: 1.5; color: #333; }
+      </style>
+    </head>
+    <body>
+      <h2>🌾 KisanMitra AI Assistant</h2>
+      <textarea id="prompt" placeholder="Ask anything about crops, fertilizer, or farming advice..."></textarea><br>
+      <button onclick="askAI()">Ask KisanMitra</button>
+      <div id="response">Your answer will appear here...</div>
+
+      <script>
+        async function askAI() {
+          const prompt = document.getElementById('prompt').value;
+          const resDiv = document.getElementById('response');
+          if(!prompt.trim()) return alert("Please enter a question!");
+          
+          resDiv.innerText = "⏳ Thinking...";
+          try {
+            const res = await fetch('/api/chat', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ prompt })
+            });
+            const data = await res.json();
+            if(data.success) {
+              resDiv.innerText = data.answer;
+            } else {
+              resDiv.innerText = "❌ Error: " + data.error;
+            }
+          } catch(e) {
+            resDiv.innerText = "❌ Request failed: " + e.message;
+          }
+        }
+      </script>
+    </body>
+    </html>
+  `);
 });
 
-// Weather Mock Endpoint
-app.get('/api/weather', (req, res) => {
-  res.json({
-    temp: '31°C',
-    condition: 'Partly Cloudy',
-    humidity: '65%',
-    rainfallChance: '12%',
-    advisory: 'Ideal conditions for crop spraying over the next 48 hrs.'
-  });
+// GET: Market Rates
+app.get('/api/market-rates', async (req, res) => {
+  try {
+    const rates = await prisma.marketRate.findMany();
+    res.json({ success: true, data: rates });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
 });
 
-// AI Assistant Endpoint (Connects to OpenAI / Claude API later)
-app.post('/api/chat', (req, res) => {
-  const { message } = req.body;
-  
-  // Custom response logic
-  let reply = "Thank you for asking! Maintaining proper soil moisture and applying organic nitrogen boosters will optimize your yield.";
-  
-  if (message.toLowerCase().includes('wheat')) {
-    reply = "Current wheat market prices are trending upwards. Ensure proper harvesting before expected rains.";
-  } else if (message.toLowerCase().includes('pest') || message.toLowerCase().includes('disease')) {
-    reply = "Please isolate the affected leaves and consider spraying organic neem oil solution.";
+// GET: Users
+app.get('/api/users', async (req, res) => {
+  try {
+    const users = await prisma.user.findMany();
+    res.json({ success: true, data: users });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// 🌾 KisanMitra AI Chat Endpoint
+app.post('/api/chat', async (req, res) => {
+  const { prompt } = req.body;
+
+  if (!prompt) {
+    return res.status(400).json({ success: false, error: 'Prompt is required' });
   }
 
-  res.json({ reply });
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash-lite',
+      contents: `You are KisanMitra, an empathetic, expert agricultural guide for Indian farmers. Answer concisely, practically, and accurately: ${prompt}`,
+    });
+
+    res.json({ success: true, answer: response.text });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
 });
 
 app.listen(PORT, () => {
